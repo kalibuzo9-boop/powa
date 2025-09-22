@@ -32,10 +32,10 @@ const router = createRouter({
   routes
 })
 
-// Navigation guard
-router.beforeEach((to, from, next) => {
+// ✅ Navigation guard corrigé
+router.beforeEach((to, _from, next) => {
   const user = JSON.parse(localStorage.getItem('user') || 'null')
-  
+
   if (to.meta.requiresAuth && !user) {
     next('/login')
   } else if (to.meta.userType && user && user.type !== to.meta.userType) {
