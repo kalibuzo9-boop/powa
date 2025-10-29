@@ -2,6 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
 import TeacherDashboard from '../views/TeacherDashboard.vue'
 import StudentDashboard from '../views/StudentDashboard.vue'
+import QRScan from '../views/QRScan.vue'
+import SignupStudent from '../views/SignupStudent.vue'
+import SignupTeacher from '../views/SignupTeacher.vue'
 
 const routes = [
   {
@@ -12,6 +15,21 @@ const routes = [
     path: '/login',
     name: 'Login',
     component: Login
+  },
+  {
+    path: '/signup-student',
+    name: 'SignupStudent',
+    component: SignupStudent
+  },
+  {
+    path: '/signup-teacher',
+    name: 'SignupTeacher',
+    component: SignupTeacher
+  },
+  {
+    path: '/scan',
+    name: 'QRScan',
+    component: QRScan
   },
   {
     path: '/teacher-dashboard',

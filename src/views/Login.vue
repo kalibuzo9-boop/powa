@@ -52,6 +52,32 @@
                 >
                   {{ errorMessage }}
                 </v-alert>
+
+                <v-divider class="my-4"></v-divider>
+
+                <div class="text-center">
+                  <p class="text-body-2 mb-2">Pas encore de compte ?</p>
+                  <div class="d-flex gap-2">
+                    <v-btn
+                      variant="outlined"
+                      color="primary"
+                      @click="$router.push('/signup-student')"
+                      class="flex-grow-1"
+                    >
+                      <v-icon left>mdi-account-plus</v-icon>
+                      Étudiant
+                    </v-btn>
+                    <v-btn
+                      variant="outlined"
+                      color="secondary"
+                      @click="$router.push('/signup-teacher')"
+                      class="flex-grow-1"
+                    >
+                      <v-icon left>mdi-account-tie</v-icon>
+                      Enseignant
+                    </v-btn>
+                  </div>
+                </div>
               </v-card-text>
             </v-card>
           </v-col>
@@ -64,7 +90,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import ApiService from '../services/api'
+import AuthService from '../services/auth.service'
 
 const router = useRouter()
 const form = ref()
@@ -89,22 +115,27 @@ const handleLogin = async () => {
   errorMessage.value = ''
 
   try {
-    const response = await ApiService.login(formData.value)
-    
-    if (response.status === 'success' && response.data) {
-      // Store user data
-      localStorage.setItem('user', JSON.stringify(response.data))
-      
-      // Redirect based on user type
-      const redirectPath = response.data.type === 'teacher' 
-        ? '/teacher-dashboard' 
+    const result = await AuthService.login(formData.value)
+
+    if (result.success && result.user) {
+      AuthService.setCurrentUser(result.user)
+
+      const pendingScan = localStorage.getItem('pending_scan')
+      if (pendingScan) {
+        const scanData = JSON.parse(pendingScan)
+        router.push(`/scan?session_id=${scanData.session_id}&token=${scanData.token}`)
+        return
+      }
+
+      const redirectPath = result.user.type === 'teacher'
+        ? '/teacher-dashboard'
         : '/student-dashboard'
-      
+
       router.push(redirectPath)
     } else {
-      errorMessage.value = response.message || 'Erreur de connexion'
+      errorMessage.value = result.error || 'Erreur de connexion'
     }
-  } catch (error) {
+  } catch (error: any) {
     errorMessage.value = 'Erreur de connexion. Veuillez réessayer.'
     console.error('Login error:', error)
   } finally {
@@ -112,3 +143,9 @@ const handleLogin = async () => {
   }
 }
 </script>
+
+<style scoped>
+.gap-2 {
+  gap: 0.5rem;
+}
+</style>

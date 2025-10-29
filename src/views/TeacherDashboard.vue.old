@@ -26,6 +26,7 @@
         </v-row>
 
         <v-row>
+          <!-- QR Code Generation -->
           <v-col cols="12" md="6">
             <v-card>
               <v-card-title>
@@ -33,38 +34,17 @@
                 Générer QR Code
               </v-card-title>
               <v-card-text>
-                <v-select
-                  v-model="selectedCourse"
-                  :items="myCourses"
-                  item-title="titre"
-                  item-value="id"
-                  label="Sélectionner un cours"
-                  variant="outlined"
-                  prepend-inner-icon="mdi-book-open-variant"
-                  :loading="loadingCourses"
-                  class="mb-3"
-                ></v-select>
-
-                <v-text-field
-                  v-model="salle"
-                  label="Salle (optionnel)"
-                  variant="outlined"
-                  prepend-inner-icon="mdi-door"
-                  class="mb-3"
-                ></v-text-field>
-
                 <v-btn
                   color="primary"
                   size="large"
                   block
                   @click="generateQR"
                   :loading="generatingQR"
-                  :disabled="!selectedCourse"
                 >
                   <v-icon class="mr-2">mdi-plus</v-icon>
                   Nouvelle Session
                 </v-btn>
-
+                
                 <div v-if="currentSession" class="text-center mt-4">
                   <v-card variant="outlined" class="pa-4">
                     <div v-html="qrCodeSVG" class="mb-4"></div>
@@ -72,11 +52,8 @@
                       <v-icon start>mdi-clock</v-icon>
                       Expire dans: {{ timeRemaining }}
                     </v-chip>
-                    <div class="text-caption mb-2">
-                      Cours: {{ selectedCourseName }}
-                    </div>
                     <div class="text-caption">
-                      Salle: {{ salle || 'Non spécifiée' }}
+                      Session ID: {{ currentSession.session_id }}
                     </div>
                   </v-card>
                 </div>
@@ -84,6 +61,7 @@
             </v-card>
           </v-col>
 
+          <!-- Session Info -->
           <v-col cols="12" md="6">
             <v-card>
               <v-card-title>
@@ -121,6 +99,7 @@
           </v-col>
         </v-row>
 
+        <!-- Attendance List -->
         <v-row v-if="currentSession && presences.length > 0">
           <v-col cols="12">
             <v-card>
@@ -143,51 +122,6 @@
             </v-card>
           </v-col>
         </v-row>
-
-        <v-row>
-          <v-col cols="12">
-            <v-card>
-              <v-card-title>
-                <v-icon class="mr-2">mdi-file-pdf-box</v-icon>
-                Exporter les Présences
-              </v-card-title>
-              <v-card-text>
-                <v-row>
-                  <v-col cols="12" md="4">
-                    <v-select
-                      v-model="exportCourse"
-                      :items="myCourses"
-                      item-title="titre"
-                      item-value="id"
-                      label="Cours"
-                      variant="outlined"
-                    ></v-select>
-                  </v-col>
-                  <v-col cols="12" md="4">
-                    <v-text-field
-                      v-model="exportDate"
-                      label="Date"
-                      type="date"
-                      variant="outlined"
-                    ></v-text-field>
-                  </v-col>
-                  <v-col cols="12" md="4" class="d-flex align-center">
-                    <v-btn
-                      color="primary"
-                      @click="exportPDF"
-                      :loading="exporting"
-                      :disabled="!exportCourse || !exportDate"
-                      block
-                    >
-                      <v-icon class="mr-2">mdi-download</v-icon>
-                      Exporter PDF
-                    </v-btn>
-                  </v-col>
-                </v-row>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
       </v-container>
     </v-main>
 
@@ -201,29 +135,18 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
-import AuthService from '../services/auth.service'
-import AttendanceService, { type AttendanceRecord } from '../services/attendance.service'
-import PDFService from '../services/pdf.service'
-import type { Cours } from '../services/supabase'
+import ApiService, { type GenerateQRResponse, type Presence } from '../services/api'
 
 const router = useRouter()
 
-const user = ref(await AuthService.getCurrentUser())
-const myCourses = ref<Cours[]>([])
-const selectedCourse = ref<string>('')
-const salle = ref('')
-const currentSession = ref<any>(null)
+const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
+const currentSession = ref<GenerateQRResponse | null>(null)
 const qrCodeSVG = ref('')
-const presences = ref<AttendanceRecord[]>([])
+const presences = ref<Presence[]>([])
 const generatingQR = ref(false)
-const loadingCourses = ref(false)
 const loadingPresences = ref(false)
 const timeLeft = ref(0)
 const timer = ref<NodeJS.Timeout>()
-
-const exportCourse = ref<string>('')
-const exportDate = ref(new Date().toISOString().split('T')[0])
-const exporting = ref(false)
 
 const snackbar = ref({
   show: false,
@@ -232,8 +155,8 @@ const snackbar = ref({
 })
 
 const presenceHeaders = [
-  { title: 'Matricule', key: 'student_matricule' },
-  { title: 'Nom', key: 'student_name' },
+  { title: 'Matricule', key: 'etudiant_matricule' },
+  { title: 'Nom', key: 'etudiant_nom' },
   { title: 'Date/Heure', key: 'date_heure' },
 ]
 
@@ -243,59 +166,41 @@ const timeRemaining = computed(() => {
   return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
 })
 
-const selectedCourseName = computed(() => {
-  const course = myCourses.value.find(c => c.id === selectedCourse.value)
-  return course?.titre || ''
-})
-
-const loadMyCourses = async () => {
-  if (!user.value) return
-
-  loadingCourses.value = true
-  try {
-    const courses = await AttendanceService.getTeacherCourses(user.value.id)
-    myCourses.value = courses
-  } catch (error) {
-    console.error('Load courses error:', error)
-    showSnackbar('Erreur lors du chargement des cours', 'error')
-  } finally {
-    loadingCourses.value = false
-  }
-}
-
 const generateQR = async () => {
-  if (!user.value || !selectedCourse.value) return
+  if (!user.value) return
 
   generatingQR.value = true
 
   try {
-    const { session, qr_url } = await AttendanceService.createSession({
-      enseignant_id: user.value.id,
-      cours_id: selectedCourse.value,
-      salle: salle.value || undefined,
-      duration_minutes: 5
-    })
+    const response = await ApiService.generateQR({ enseignant_id: user.value.id })
+    
+    if (response.status === 'success' && response.qr_url) {
+      currentSession.value = response
+      
+      // Generate QR code SVG
+      const qrCodeDataURL = await QRCode.toString(response.qr_url, {
+        type: 'svg',
+        width: 200,
+        margin: 2,
+        color: {
+          dark: '#1976D2',
+          light: '#FFFFFF'
+        }
+      })
+      qrCodeSVG.value = qrCodeDataURL
 
-    currentSession.value = session
-
-    const qrCodeDataURL = await QRCode.toString(qr_url, {
-      type: 'svg',
-      width: 200,
-      margin: 2,
-      color: {
-        dark: '#003366',
-        light: '#FFFFFF'
-      }
-    })
-    qrCodeSVG.value = qrCodeDataURL
-
-    timeLeft.value = 5 * 60
-    startTimer()
-
-    presences.value = []
-
-    showSnackbar('QR Code généré avec succès!', 'success')
-  } catch (error: any) {
+      // Start countdown timer
+      timeLeft.value = 5 * 60 // 5 minutes
+      startTimer()
+      
+      // Clear previous presences
+      presences.value = []
+      
+      showSnackbar('QR Code généré avec succès!', 'success')
+    } else {
+      showSnackbar(response.message || 'Erreur lors de la génération du QR', 'error')
+    }
+  } catch (error) {
     console.error('Generate QR error:', error)
     showSnackbar('Erreur lors de la génération du QR', 'error')
   } finally {
@@ -304,12 +209,12 @@ const generateQR = async () => {
 }
 
 const refreshPresences = async () => {
-  if (!currentSession.value?.id) return
+  if (!currentSession.value?.session_id) return
 
   loadingPresences.value = true
 
   try {
-    const data = await AttendanceService.getSessionAttendance(currentSession.value.id)
+    const data = await ApiService.getPresences(currentSession.value.session_id)
     presences.value = data
   } catch (error) {
     console.error('Refresh presences error:', error)
@@ -321,11 +226,12 @@ const refreshPresences = async () => {
 
 const startTimer = () => {
   if (timer.value) clearInterval(timer.value)
-
+  
   timer.value = setInterval(() => {
     if (timeLeft.value > 0) {
       timeLeft.value--
-
+      
+      // Auto-refresh presences every 10 seconds
       if (timeLeft.value % 10 === 0) {
         refreshPresences()
       }
@@ -338,38 +244,6 @@ const startTimer = () => {
   }, 1000)
 }
 
-const exportPDF = async () => {
-  if (!user.value || !exportCourse.value || !exportDate.value) return
-
-  exporting.value = true
-
-  try {
-    const course = myCourses.value.find(c => c.id === exportCourse.value)
-    const records = await AttendanceService.getTeacherAttendanceByDate(
-      user.value.id,
-      exportDate.value
-    )
-
-    const filtered = records.filter((r: any) =>
-      r.sessions?.cours_id === exportCourse.value
-    )
-
-    PDFService.generateAttendancePDF({
-      teacherName: `${user.value.nom} ${user.value.prenom || ''}`.trim(),
-      courseName: course?.titre,
-      date: exportDate.value,
-      records: filtered
-    })
-
-    showSnackbar('PDF exporté avec succès!', 'success')
-  } catch (error: any) {
-    console.error('Export PDF error:', error)
-    showSnackbar('Erreur lors de l\'export PDF', 'error')
-  } finally {
-    exporting.value = false
-  }
-}
-
 const formatDateTime = (dateTime: string) => {
   return new Date(dateTime).toLocaleString('fr-FR')
 }
@@ -379,17 +253,14 @@ const showSnackbar = (text: string, color: string) => {
 }
 
 const logout = () => {
-  AuthService.logout()
+  localStorage.removeItem('user')
   router.push('/login')
 }
 
-onMounted(async () => {
+onMounted(() => {
   if (!user.value || user.value.type !== 'teacher') {
     router.push('/login')
-    return
   }
-
-  await loadMyCourses()
 })
 
 onUnmounted(() => {
