@@ -204,13 +204,13 @@ import QRCode from 'qrcode'
 import AuthService from '../services/auth.service'
 import AttendanceService, { type AttendanceRecord } from '../services/attendance.service'
 import PDFService from '../services/pdf.service'
-import type { Cours } from '../services/supabase'
+import type { Cours } from '../services/mysql-api.service'
 
 const router = useRouter()
 
 const user = ref(await AuthService.getCurrentUser())
 const myCourses = ref<Cours[]>([])
-const selectedCourse = ref<string>('')
+const selectedCourse = ref<number | ''>('')
 const salle = ref('')
 const currentSession = ref<any>(null)
 const qrCodeSVG = ref('')
@@ -221,7 +221,7 @@ const loadingPresences = ref(false)
 const timeLeft = ref(0)
 const timer = ref<NodeJS.Timeout>()
 
-const exportCourse = ref<string>('')
+const exportCourse = ref<number | ''>('')
 const exportDate = ref(new Date().toISOString().split('T')[0])
 const exporting = ref(false)
 
@@ -244,7 +244,7 @@ const timeRemaining = computed(() => {
 })
 
 const selectedCourseName = computed(() => {
-  const course = myCourses.value.find(c => c.id === selectedCourse.value)
+  const course = myCourses.value.find((c: Cours) => c.id === selectedCourse.value)
   return course?.titre || ''
 })
 
@@ -344,7 +344,7 @@ const exportPDF = async () => {
   exporting.value = true
 
   try {
-    const course = myCourses.value.find(c => c.id === exportCourse.value)
+    const course = myCourses.value.find((c: Cours) => c.id === exportCourse.value)
     const records = await AttendanceService.getTeacherAttendanceByDate(
       user.value.id,
       exportDate.value

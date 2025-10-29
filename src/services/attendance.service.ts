@@ -1,8 +1,8 @@
-import { supabase, type Session, type Presence, type Cours } from './supabase'
+import mysqlApi, { type Session, type Presence, type Cours } from './mysql-api.service'
 
 export interface CreateSessionData {
-  enseignant_id: string
-  cours_id?: string
+  enseignant_id: number
+  cours_id?: number
   salle?: string
   duration_minutes?: number
 }
@@ -16,245 +16,102 @@ export interface AttendanceRecord extends Presence {
 
 class AttendanceService {
   async getCourses(): Promise<Cours[]> {
-    const { data, error } = await supabase
-      .from('cours')
-      .select('*')
-      .order('titre')
-
-    if (error) throw error
-    return data || []
+    try {
+      return await mysqlApi.getAllCourses()
+    } catch (error) {
+      console.error('Error loading courses:', error)
+      return []
+    }
   }
 
-  async getTeacherCourses(teacherId: string): Promise<Cours[]> {
-    const { data, error } = await supabase
-      .from('teacher_courses')
-      .select('cours(*)')
-      .eq('teacher_id', teacherId)
-
-    if (error) throw error
-    return data?.map((tc: any) => tc.cours) || []
+  async getTeacherCourses(teacherId: number): Promise<Cours[]> {
+    try {
+      return await mysqlApi.getTeacherCourses(teacherId)
+    } catch (error) {
+      console.error('Error loading teacher courses:', error)
+      return []
+    }
   }
 
   async createSession(data: CreateSessionData): Promise<{ session: Session; qr_url: string }> {
-    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-
-    const durationMinutes = data.duration_minutes || 5
-    const expiration = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
-
-    const { data: session, error } = await supabase
-      .from('sessions')
-      .insert({
-        session_id: sessionId,
-        enseignant_id: data.enseignant_id,
-        cours_id: data.cours_id,
-        salle: data.salle,
-        token,
-        expiration
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-
-    const baseUrl = window.location.origin
-    const qrUrl = `${baseUrl}/scan?session_id=${sessionId}&token=${token}`
-
-    return { session, qr_url: qrUrl }
+    try {
+      return await mysqlApi.createSession(data)
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Erreur lors de la création de la session')
+    }
   }
 
   async validateSession(sessionId: string, token: string): Promise<{ valid: boolean; session?: Session; error?: string }> {
-    const { data: session, error } = await supabase
-      .from('sessions')
-      .select('*')
-      .eq('session_id', sessionId)
-      .eq('token', token)
-      .maybeSingle()
-
-    if (error) {
-      return { valid: false, error: error.message }
-    }
-
-    if (!session) {
-      return { valid: false, error: 'Session invalide' }
-    }
-
-    const now = new Date()
-    const expiration = new Date(session.expiration)
-
-    if (now > expiration) {
-      return { valid: false, error: 'Session expirée' }
-    }
-
-    return { valid: true, session }
-  }
-
-  async recordAttendance(studentId: string, sessionId: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const { data: existing } = await supabase
-        .from('presences')
-        .select('id')
-        .eq('etudiant_id', studentId)
-        .eq('session_id', sessionId)
-        .maybeSingle()
+      const response = await mysqlApi.validateSession(sessionId, token)
 
-      if (existing) {
-        return { success: false, error: 'Présence déjà enregistrée pour cette session' }
+      if (response.valid && response.session) {
+        return { valid: true, session: response.session }
       }
 
-      const { error } = await supabase
-        .from('presences')
-        .insert({
-          etudiant_id: studentId,
-          session_id: sessionId,
-          date_heure: new Date().toISOString()
-        })
+      return { valid: false, error: response.error || 'Session invalide' }
+    } catch (error: any) {
+      if (error.response?.status === 410) {
+        return { valid: false, error: 'Session expirée' }
+      }
+      if (error.response?.status === 404) {
+        return { valid: false, error: 'Session invalide' }
+      }
+      return { valid: false, error: error.response?.data?.error || 'Erreur lors de la validation' }
+    }
+  }
 
-      if (error) {
-        return { success: false, error: error.message }
+  async recordAttendance(studentId: number, sessionId: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await mysqlApi.recordAttendance(studentId, sessionId)
+
+      if (response.error) {
+        return { success: false, error: response.error }
       }
 
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      if (error.response?.status === 409) {
+        return { success: false, error: 'Présence déjà enregistrée pour cette session' }
+      }
+      return { success: false, error: error.response?.data?.error || 'Erreur lors de l\'enregistrement' }
     }
   }
 
-  async getSessionAttendance(sessionId: string): Promise<AttendanceRecord[]> {
-    const { data, error } = await supabase
-      .from('presences')
-      .select(`
-        *,
-        users:etudiant_id (
-          matricule,
-          nom,
-          prenom
-        )
-      `)
-      .eq('session_id', sessionId)
-      .order('date_heure', { ascending: false })
-
-    if (error) throw error
-
-    return data?.map((p: any) => ({
-      ...p,
-      student_matricule: p.users?.matricule,
-      student_name: `${p.users?.nom} ${p.users?.prenom || ''}`.trim()
-    })) || []
+  async getSessionAttendance(sessionId: number): Promise<AttendanceRecord[]> {
+    try {
+      return await mysqlApi.getSessionAttendance(sessionId)
+    } catch (error) {
+      console.error('Error loading session attendance:', error)
+      return []
+    }
   }
 
-  async getStudentAttendance(studentId: string): Promise<AttendanceRecord[]> {
-    const { data, error } = await supabase
-      .from('presences')
-      .select(`
-        *,
-        sessions:session_id (
-          expiration,
-          cours:cours_id (
-            titre
-          )
-        )
-      `)
-      .eq('etudiant_id', studentId)
-      .order('date_heure', { ascending: false })
-
-    if (error) throw error
-
-    return data?.map((p: any) => ({
-      ...p,
-      session_expiration: p.sessions?.expiration,
-      course_name: p.sessions?.cours?.titre
-    })) || []
+  async getStudentAttendance(studentId: number): Promise<AttendanceRecord[]> {
+    try {
+      return await mysqlApi.getStudentAttendance(studentId)
+    } catch (error) {
+      console.error('Error loading student attendance:', error)
+      return []
+    }
   }
 
-  async getTeacherAttendanceByDate(teacherId: string, date: string): Promise<AttendanceRecord[]> {
-    const startOfDay = new Date(date)
-    startOfDay.setHours(0, 0, 0, 0)
-
-    const endOfDay = new Date(date)
-    endOfDay.setHours(23, 59, 59, 999)
-
-    const { data, error } = await supabase
-      .from('presences')
-      .select(`
-        *,
-        users:etudiant_id (
-          matricule,
-          nom,
-          prenom
-        ),
-        sessions:session_id (
-          enseignant_id,
-          salle,
-          cours:cours_id (
-            titre,
-            code
-          )
-        )
-      `)
-      .gte('date_heure', startOfDay.toISOString())
-      .lte('date_heure', endOfDay.toISOString())
-
-    if (error) throw error
-
-    const filtered = data?.filter((p: any) => p.sessions?.enseignant_id === teacherId) || []
-
-    return filtered.map((p: any) => ({
-      ...p,
-      student_matricule: p.users?.matricule,
-      student_name: `${p.users?.nom} ${p.users?.prenom || ''}`.trim(),
-      course_name: p.sessions?.cours?.titre
-    }))
+  async getTeacherAttendanceByDate(teacherId: number, date: string): Promise<AttendanceRecord[]> {
+    try {
+      return await mysqlApi.getTeacherAttendanceByDate(teacherId, date)
+    } catch (error) {
+      console.error('Error loading teacher attendance by date:', error)
+      return []
+    }
   }
 
-  async getTeacherAttendanceByCourse(teacherId: string, coursId: string, startDate: string, endDate: string): Promise<AttendanceRecord[]> {
-    const start = new Date(startDate)
-    start.setHours(0, 0, 0, 0)
-
-    const end = new Date(endDate)
-    end.setHours(23, 59, 59, 999)
-
-    const { data: sessions } = await supabase
-      .from('sessions')
-      .select('id')
-      .eq('enseignant_id', teacherId)
-      .eq('cours_id', coursId)
-      .gte('created_at', start.toISOString())
-      .lte('created_at', end.toISOString())
-
-    if (!sessions || sessions.length === 0) return []
-
-    const sessionIds = sessions.map(s => s.id)
-
-    const { data, error } = await supabase
-      .from('presences')
-      .select(`
-        *,
-        users:etudiant_id (
-          matricule,
-          nom,
-          prenom
-        ),
-        sessions:session_id (
-          salle,
-          cours:cours_id (
-            titre
-          )
-        )
-      `)
-      .in('session_id', sessionIds)
-      .order('date_heure', { ascending: false })
-
-    if (error) throw error
-
-    return data?.map((p: any) => ({
-      ...p,
-      student_matricule: p.users?.matricule,
-      student_name: `${p.users?.nom} ${p.users?.prenom || ''}`.trim(),
-      course_name: p.sessions?.cours?.titre
-    })) || []
+  async getTeacherAttendanceByCourse(teacherId: number, coursId: number, startDate: string, endDate: string): Promise<AttendanceRecord[]> {
+    try {
+      return await mysqlApi.getTeacherAttendanceByCourse(teacherId, coursId, startDate, endDate)
+    } catch (error) {
+      console.error('Error loading teacher attendance by course:', error)
+      return []
+    }
   }
 }
 
